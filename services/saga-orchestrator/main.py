@@ -7,74 +7,59 @@ METADATA_SERVICE_URL = "http://localhost:8001"
 TEXT_EXTRACTOR_URL = "http://localhost:8002"
 VECTOR_DB_URL = "http://localhost:8003"
 
-
 @app.get("/health")
 def health():
-    return {
-        "status": "ok",
-        "service": "saga-orchestrator"
-    }
-
+    return {"status": "ok", "service": "saga-orchestrator"}
 
 @app.post("/upload")
 async def upload_document(file: UploadFile = File(...)):
+    document_id = None
     try:
-        metadata_response = requests.post(
-            f"{METADATA_SERVICE_URL}/metadata",
-            json={
-                "filename": file.filename
-            }
-        )
+        # Save Metadata (State = PROCESSING)
+        meta_res = requests.post(f"{METADATA_SERVICE_URL}/metadata", json={"filename": file.filename})
+        meta_res.raise_for_status()
+        metadata = meta_res.json()
+        document_id = metadata["document_id"]
 
-        metadata_response.raise_for_status()
-
-        metadata = metadata_response.json()
-
+        # Extract Text and Chunk it
         file_content = await file.read()
-
-        extract_response = requests.post(
+        extract_res = requests.post(
             f"{TEXT_EXTRACTOR_URL}/extract",
-            files={
-                "file": (
-                    file.filename,
-                    file_content,
-                    "application/pdf"
-                )
-            }
+            files={"file": (file.filename, file_content, "application/pdf")}
         )
+        extract_res.raise_for_status()
+        extracted = extract_res.json()
+        chunks = extracted.get("chunks", [])
 
-        extract_response.raise_for_status()
+        if not chunks:
+            raise ValueError("No text could be extracted.")
 
-        extracted = extract_response.json()
-
-        text = extracted.get("text", "").strip()
-
-        if not text:
-            raise HTTPException(
-                status_code=400,
-                detail="No text could be extracted from the document."
+        # Save Vectors (Loop through the chunks)
+        for chunk in chunks:
+            vec_res = requests.post(
+                f"{VECTOR_DB_URL}/documents",
+                json={"title": metadata["title"], "content": chunk}
             )
+            vec_res.raise_for_status()
 
-        vector_response = requests.post(
-            f"{VECTOR_DB_URL}/documents",
-            json={
-                "title": metadata["title"],
-                "content": text
-            }
-        )
-
-        vector_response.raise_for_status()
-
-        vector_result = vector_response.json()
+        # Complete Saga (State -> AVAILABLE)
+        requests.put(f"{METADATA_SERVICE_URL}/metadata/{document_id}/complete")
 
         return {
-            "message": "Document successfully indexed.",
-            "metadata": metadata,
-            "vector_record": vector_result
+            "message": "Document successfully ingested via Saga.",
+            "document_id": document_id,
+            "chunks_saved": len(chunks)
         }
 
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
+        # COMPENSATING TRANSACTION: If anything fails, rollback the distributed state
+        if document_id:
+            try:
+                requests.delete(f"{METADATA_SERVICE_URL}/metadata/{document_id}")
+            except:
+                pass
+
         raise HTTPException(
             status_code=500,
-            detail=str(e)
+            detail=f"Saga Transaction Failed. Rollback executed. Error: {str(e)}"
         )

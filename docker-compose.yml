@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Starts the server, waits 5 seconds, and automatically pulls the Llama 3 model
+    entrypoint: >
+      /bin/sh -c "ollama serve & sleep 5 && ollama run llama3 && wait"
+
+volumes:
+  ollama_data:
