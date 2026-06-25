@@ -25,13 +25,16 @@ echo "Starting Text Extractor Service (:8002)..."
 (cd services/text-extractor-service && uvicorn main:app --port 8002) &
 
 echo "Starting Vector DB Service (:8003)..."
-(cd services/vector-database-service && uvicorn main:app --port 8003) &
+(cd services/vector-db-service && uvicorn main:app --port 8003) &
 
 echo "Starting MCP Host Service (:8004)..."
 (cd services/mcp-host-service && uvicorn main:app --port 8004) &
 
 echo "Starting Saga Orchestrator (:8005)..."
 (cd services/saga-orchestrator && uvicorn main:app --port 8005) &
+
+echo "Starting RAG Service (:8006)..."
+(cd services/rag-service && uvicorn main:app --port 8006) &
 
 # Give the backend a few seconds to initialize
 sleep 5
